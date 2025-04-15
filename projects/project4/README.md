@@ -1,5 +1,18 @@
 # CMSE/CSE 822 Project 4: GPU Computing
 
+## Notes for DB:
+Compile with: g++ -o vecadd vecadd.cpp
+
+#pragma omp target (this is the target region where you want the parallelism to run)
+    {
+    #pragma omp loop (run the omp loop)... tells the compiler 
+    }
+
+Make sure to compile with openMP.
+
+OMP_NUM_THREADS=4 
+
+
 OMP offload of Ben's exercises.
 
 ## OpenMP Vector Addition 

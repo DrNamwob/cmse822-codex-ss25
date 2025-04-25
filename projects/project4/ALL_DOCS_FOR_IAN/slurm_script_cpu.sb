@@ -1,0 +1,72 @@
+#!/bin/bash --login
+#SBATCH --job-name=jacobi_cpu_speedup
+#SBATCH --output=jacobi_cpu_speedup.out
+#SBATCH --error=jacobi_cpu_speedup.err
+#SBATCH --time=04:00:00
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=100G
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=bowmand8@msu.edu
+
+# 0) Clean modules and load NVHPC toolchain
+module purge
+module load NVHPC/23.7-CUDA-12.1.1
+
+# 1) Change to project directory
+cd /mnt/scratch/bowmand8/cmse822-codex-ss25/projects/project4
+
+# 2) Compile the CPU-only Jacobi solver for multicore
+nvc++ -O2 -mp=multicore -o jacobi_cpu claude_jacobian_cpu.cpp
+
+# 3) Prepare output directory and CSV
+OUTDIR=/mnt/scratch/bowmand8/cmse822-codex-ss25/projects/project4/Timing_Results
+mkdir -p "$OUTDIR"
+CSV="$OUTDIR/results.csv"
+echo "size,threads,gflops" > "$CSV"
+
+# 4) Define test sizes and thread counts
+#    sizes: matrix dimensions to test
+#    threads: number of OpenMP threads to benchmark
+sizes=(8000)
+threads=(1 2 4 8 16 32)
+
+# 5) Benchmark loop
+#    This nested loop automatically iterates over each matrix size and each thread count
+for N in "${sizes[@]}"; do
+  for T in "${threads[@]}"; do
+    export OMP_NUM_THREADS=$T
+    # run the solver and capture the GFLOP/s line
+    output=$(./jacobi_cpu $N 2>&1 | grep "Estimated performance")
+    # extract the GFLOP/s value (penultimate field)
+    gflop=$(echo $output | awk '{print $(NF-1)}')
+    echo "$N,$T,$gflop" >> "$CSV"
+  done
+done
+
+# 6) Plot with Python
+conda activate DB_Main
+# module load python/3.9
+python3 << 'EOF'
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Read results
+_df = pd.read_csv("$CSV")
+fig, ax = plt.subplots()
+for N, grp in _df.groupby("size"):
+    ax.plot(grp["threads"], grp["gflops"], marker='o', label=f"N={N}")
+
+ax.set_xscale("log", base=2)
+ax.set_xticks([1,2,4,8,16,32])
+ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+ax.set_xlabel("Number of threads")
+ax.set_ylabel("GFLOP/s")
+ax.set_title("Jacobi Solver CPU Speed‑up")
+ax.legend(title="Matrix size")
+ax.grid(True, which="both", ls="--", lw=0.5)
+
+plt.tight_layout()
+plt.savefig("$OUTDIR/speedup_plot_cpu.png", dpi=300)
+EOF
+
+echo "Benchmark complete. See $OUTDIR/results.csv and $OUTDIR/speedup_plot_cpu.png"

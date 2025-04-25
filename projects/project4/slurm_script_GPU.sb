@@ -1,0 +1,66 @@
+#!/bin/bash --login
+#SBATCH --job-name=jacobi_gpu_speedup
+#SBATCH --output=jacobi_gpu_speedup.out
+#SBATCH --error=jacobi_gpu_speedup.err
+#SBATCH --time=02:00:00
+#SBATCH --gres=gpu:1
+#SBATCH --mem=100G
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=bowmand8@msu.edu
+
+# 0) Clean modules and load NVIDIA HPC toolchain (GPU nodes only have NVHPC/22.11-CUDA-11.7.0)
+module purge
+module load NVHPC/22.11-CUDA-11.7.0
+
+# 1) Change to project directory
+cd /mnt/scratch/bowmand8/cmse822-codex-ss25/projects/project4
+
+# 2) Compile the GPU Jacobi solver
+nvc++ -O2 -mp=gpu -gpu=ccnative -o jacobi_gpu claude_jacobian_gpu.cpp
+
+# 3) Prepare output directory and CSV
+OUTDIR=/mnt/scratch/bowmand8/cmse822-codex-ss25/projects/project4/Timing_Results
+mkdir -p "$OUTDIR"
+CSV="$OUTDIR/results_gpu.csv"
+echo "size,gflops" > "$CSV"
+
+# 4) Define test sizes (matrix dimensions)
+sizes=(250 500 1000 2000 4000)
+
+# 5) Benchmark loop for GPU
+#    Runs once per matrix size and records GFLOP/s
+for N in "${sizes[@]}"; do
+    output=$(./jacobi_gpu $N 2>&1 | grep "Estimated performance")
+    gflop=$(echo "$output" | awk '{print $(NF-1)}')
+    echo "$N,$gflop" >> "$CSV"
+done
+
+# 6) Activate conda environment for plotting (ensures pandas & matplotlib are available)
+source ~/.bashrc
+conda activate DB_Main
+
+# 7) Plot with Python
+python3 << 'EOF'
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Read GPU results
+df = pd.read_csv(r"$CSV")
+fig, ax = plt.subplots()
+ax.plot(df["size"], df["gflops"], marker='o', linestyle='-')
+
+ax.set_xscale("log", base=2)
+ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+ax.set_xlabel("Matrix size (N)")
+ax.set_ylabel("GFLOP/s")
+ax.set_title("Jacobi Solver GPU Performance vs Matrix Size")
+ax.grid(True, which="both", ls="--", lw=0.5)
+
+plt.tight_layout()
+plt.savefig(r"$OUTDIR/speedup_plot_gpu.png", dpi=300)
+EOF
+
+# 8) Deactivate conda environment
+conda deactivate
+
+echo "GPU benchmark complete. See $OUTDIR/results_gpu.csv and $OUTDIR/speedup_plot_gpu.png"
